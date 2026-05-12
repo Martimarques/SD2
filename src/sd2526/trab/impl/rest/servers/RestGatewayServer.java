@@ -1,7 +1,6 @@
 package sd2526.trab.impl.rest.servers;
 
 import java.util.logging.Logger;
-
 import org.glassfish.jersey.server.ResourceConfig;
 
 public class RestGatewayServer extends AbstractRestServer {
@@ -16,9 +15,13 @@ public class RestGatewayServer extends AbstractRestServer {
 
 	@Override
 	void registerResources(ResourceConfig config) {
-		config.registerInstances(new RestUsersResource(true), new RestMessagesResource(true));
-//		config.register(.getClass());
-//		config.register(.getClass());
+		// 1. Avisar os recursos que estamos a correr em modo Gateway
+		RestUsersResource.isGateway = true;
+		RestMessagesResource.isGateway = true;
+
+		// 2. Registar as classes em vez das instâncias para o Jersey detetar os @Path corretamente
+		config.register(RestUsersResource.class);
+		config.register(RestMessagesResource.class);
 	}
 
 	public static void main(String[] args) {

@@ -10,6 +10,8 @@ import sd2526.trab.impl.api.rest.RestAdminMessages;
 
 public class RestAdminMessagesClient extends RestClient implements AdminMessages {
 
+	private static final String SERVER_SECRET = "SD2526-Password-Secreta";
+
 	public RestAdminMessagesClient(String serverURI) {
 		super(serverURI, RestMessages.PATH);
 	}
@@ -28,11 +30,12 @@ public class RestAdminMessagesClient extends RestClient implements AdminMessages
 	public Result<Void> remoteDeleteUserInbox(String name) {
 		return super.reTry( () -> doRemoteDeleteUserInbox(name) );
 	}
-	
+
 	private Result<Void> doRemotePostMessage(Message msg) {
 		return super.toJavaResult( target
 				.path(RestAdminMessages.ADMIN)
 				.request()
+				.header("X-Server-Secret", SERVER_SECRET)
 				.post( Entity.entity(msg, MediaType.APPLICATION_JSON )));
 	}
 
@@ -41,15 +44,17 @@ public class RestAdminMessagesClient extends RestClient implements AdminMessages
 				.path(RestAdminMessages.ADMIN)
 				.path( mid )
 				.request()
+				.header("X-Server-Secret", SERVER_SECRET)
 				.delete());
 	}
-	
+
 	private Result<Void> doRemoteDeleteUserInbox(String name) {
 		return super.toJavaResult( target
 				.path(RestAdminMessages.ADMIN)
 				.path(RestAdminMessages.INBOX)
 				.path( name )
 				.request()
+				.header("X-Server-Secret", SERVER_SECRET)
 				.delete());
 	}
 }

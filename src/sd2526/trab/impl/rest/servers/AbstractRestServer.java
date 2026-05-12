@@ -15,6 +15,12 @@ import sd2526.trab.impl.utils.IP;
 public abstract class AbstractRestServer extends AbstractServer {
 	private static final String SERVER_BASE_URI = "https://%s:%s%s";
 	private static final String REST_CTX = "/rest";
+
+	static {
+		System.setProperty("java.net.preferIPv4Stack", "true");
+		System.setProperty("java.util.logging.SimpleFormatter.format", "%4$s: %5$s\n");
+	}
+
 	private final int port;
 
 	protected AbstractRestServer(Logger log, String service, int port) {

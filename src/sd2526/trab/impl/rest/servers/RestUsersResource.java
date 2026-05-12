@@ -4,6 +4,10 @@ import java.util.List;
 import java.util.Set;
 
 import jakarta.inject.Singleton;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.Response.Status;
 import sd2526.trab.api.User;
 import sd2526.trab.api.java.Users;
 import sd2526.trab.api.rest.RestUsers;
@@ -16,21 +20,32 @@ import sd2526.trab.impl.java.servers.JavaUsers;
 public class RestUsersResource extends RestResource implements RestUsers, RestAdminUsers {
 
 	static boolean isGateway = false;
-	
-	Users impl;	
+	private static final String SERVER_SECRET = "SD2526-Password-Secreta";
+
+	@Context
+	HttpHeaders headers;
+
+	Users impl;
 
 	synchronized Users impl() {
 		if( impl == null )
-			impl = isGateway ? Clients.UsersClient.get() : JavaUsers.getInstance();	
+			impl = isGateway ? Clients.UsersClient.get() : JavaUsers.getInstance();
 		return impl;
 	}
-		
+
+	private void checkSecret() {
+		List<String> secret = headers.getRequestHeader("X-Server-Secret");
+		if (secret == null || secret.isEmpty() || !SERVER_SECRET.equals(secret.get(0))) {
+			throw new WebApplicationException(Status.FORBIDDEN);
+		}
+	}
+
 	public RestUsersResource() {}
-	
-	RestUsersResource(boolean gw) {	
+
+	RestUsersResource(boolean gw) {
 		isGateway = gw;
 	}
-	
+
 	@Override
 	public String postUser(User user) {
 		return super.resultOrThrow( impl().postUser(user));
@@ -58,6 +73,7 @@ public class RestUsersResource extends RestResource implements RestUsers, RestAd
 
 	@Override
 	public Set<String> checkUsers(Set<String> names) {
-		return super.resultOrThrow(((AdminUsers)impl).checkUsers(names));
+		checkSecret();
+		return super.resultOrThrow(((AdminUsers)impl()).checkUsers(names));
 	}
 }

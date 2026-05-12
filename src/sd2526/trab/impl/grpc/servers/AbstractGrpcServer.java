@@ -10,6 +10,7 @@ import java.util.logging.Logger;
 import javax.net.ssl.KeyManagerFactory;
 
 import io.grpc.Server;
+import io.grpc.ServerServiceDefinition;
 import io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.NettyServerBuilder;
 import io.netty.handler.ssl.SslContext;
@@ -27,31 +28,25 @@ public abstract class AbstractGrpcServer extends AbstractServer {
 	protected final Server server;
 
 	protected AbstractGrpcServer(Logger log, String service, int port) {
-		// O URI tem de usar o HostName em vez do IP para o TLS funcionar (como diz no PPT)
 		super(log, service, String.format(SERVER_BASE_URI, getHostname(), port, GRPC_CTX));
 
 		try {
-			// 1. Ler as propriedades da JVM (Keystore) do PPT
 			String keyStoreFilename = System.getProperty("javax.net.ssl.keyStore");
 			String keyStorePassword = System.getProperty("javax.net.ssl.keyStorePassword");
 
-			// 2. Carregar a Keystore
 			KeyStore keystore = KeyStore.getInstance(KeyStore.getDefaultType());
 			try(FileInputStream input = new FileInputStream(keyStoreFilename)) {
 				keystore.load(input, keyStorePassword.toCharArray());
 			}
 
-			// 3. Inicializar a KeyManagerFactory
 			KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(
 					KeyManagerFactory.getDefaultAlgorithm());
 			keyManagerFactory.init(keystore, keyStorePassword.toCharArray());
 
-			// 4. Criar o Contexto SSL
 			SslContext context = GrpcSslContexts.configure(
 					SslContextBuilder.forServer(keyManagerFactory)
 			).build();
 
-			// 5. Usar NettyServerBuilder com o SslContext injetado
 			var builder = NettyServerBuilder.forPort(port).sslContext(context);
 
 			for( var s : controllers( super.serverURI ) ) {
@@ -61,12 +56,11 @@ public abstract class AbstractGrpcServer extends AbstractServer {
 			this.server = builder.build();
 
 		} catch (Exception e) {
-			log.severe("Falhou a inicialização do TLS/gRPC: " + e.getMessage());
+			log.severe("Falhou a inicializacao do TLS/gRPC: " + e.getMessage());
 			throw new RuntimeException("Erro TLS no gRPC", e);
 		}
 	}
 
-	// Método auxiliar para ir buscar o Hostname
 	private static String getHostname() {
 		try {
 			return InetAddress.getLocalHost().getHostName();
@@ -75,7 +69,7 @@ public abstract class AbstractGrpcServer extends AbstractServer {
 		}
 	}
 
-	protected abstract List<GrpcController> controllers( String uri );
+	protected abstract List<ServerServiceDefinition> controllers( String uri );
 
 	protected void start() throws IOException {
 

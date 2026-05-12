@@ -13,6 +13,8 @@ import sd2526.trab.impl.api.rest.RestAdminUsers;
 
 public class RestAdminUsersClient extends RestClient implements AdminUsers {
 
+	private static final String SERVER_SECRET = "SD2526-Password-Secreta";
+
 	public RestAdminUsersClient(String serverURI) {
 		super(serverURI, RestUsers.PATH);
 	}
@@ -22,11 +24,12 @@ public class RestAdminUsersClient extends RestClient implements AdminUsers {
 		return super.reTry( () -> doCheckUsers(names));
 	}
 
-	
+
 	private Result<Set<String>> doCheckUsers(Collection<String> names) {
 		return super.toJavaResult( target
 				.path(RestAdminUsers.ADMIN)
 				.request()
+				.header("X-Server-Secret", SERVER_SECRET)
 				.accept( MediaType.APPLICATION_JSON)
 				.post( Entity.json( names )), new GenericType<Set<String>>() {});
 	}

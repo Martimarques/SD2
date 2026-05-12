@@ -49,16 +49,32 @@ public class RestClient {
 
 	protected <T> Result<T> reTry(Supplier<Result<T>> func) {
 		long T0 = System.currentTimeMillis();
-		while( (System.currentTimeMillis() - T0) < MAX_DEADLINE)
+		while( (System.currentTimeMillis() - T0) < MAX_DEADLINE) {
 			try {
-				return func.get();
+				Result<T> res = func.get();
+
+				// Se o resultado for sucesso, devolve imediatamente
+				if (res.isOK()) {
+					return res;
+				}
+
+				// Se o erro for NOT_FOUND (404), espera um pouco e tenta outra vez (resolve o delay da BD)
+				if (res.error() == ErrorCode.NOT_FOUND || res.error() == ErrorCode.TIMEOUT) {
+					Sleep.ms(RETRY_SLEEP);
+					continue; // Volta ao início do loop
+				}
+
+				// Se for outro erro qualquer (ex: CONFLICT, FORBIDDEN), devolve o erro
+				return res;
+
 			} catch (ProcessingException x) {
-				//Log.info("PE Timeout: " + x.getMessage());
+				// Erros de ligação (Timeout, Connection Refused)
 				Sleep.ms(RETRY_SLEEP);
 			} catch (Exception x) {
 				x.printStackTrace();
 				return Result.error(INTERNAL_ERROR);
 			}
+		}
 		return Result.error(TIMEOUT);
 	}
 
