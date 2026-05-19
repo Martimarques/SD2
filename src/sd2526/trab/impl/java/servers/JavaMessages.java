@@ -105,13 +105,15 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 	public Result<List<String>> searchInbox(String name, String pwd, String query) {
 		Log.info( () -> "searchInbox : name = %s, pwd = %s, query=%s\n".formatted(name, pwd, query));
 
+		var safeQuery = query.toUpperCase().replace("'", "''");  // <-- ESTA LINHA
+
 		var sqlExpr = """
-				SELECT m.id FROM Message m
-				INNER JOIN InboxEntry e
-				ON e.mid = m.id 
-				AND e.recipient = '%s'
-				WHERE (upper(m.subject) LIKE '%%%s%%' OR upper(m.contents) LIKE '%%%s%%')
-				""".formatted(name, query.toUpperCase(), query.toUpperCase());
+            SELECT m.id FROM Message m
+            INNER JOIN InboxEntry e
+            ON e.mid = m.id 
+            AND e.recipient = '%s'
+            WHERE (upper(m.subject) LIKE '%%%s%%' OR upper(m.contents) LIKE '%%%s%%')
+            """.formatted(name, safeQuery, safeQuery);  // <-- USA safeQuery
 
 		return getUser(name, pwd )
 				.then( () -> DB.select( sqlExpr, String.class));
