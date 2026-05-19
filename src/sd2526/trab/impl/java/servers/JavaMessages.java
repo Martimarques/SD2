@@ -52,7 +52,7 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 			.expireAfterWrite(Duration.ofMillis(DIRTY_INBOX_CACHE_EXPIRATION))
 			.removalListener( (removed) -> {
 
-				// When triggered, removes any orphaned messages in the database, 
+				// When triggered, removes any orphaned messages in the database,
 				// i.e. messages that are no longer referenced by any inbox...
 
 				var sqlExpr = """
