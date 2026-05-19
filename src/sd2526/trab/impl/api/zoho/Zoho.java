@@ -1,5 +1,6 @@
 package sd2526.trab.impl.api.zoho;
 
+import java.util.Base64;
 import java.util.List;
 import com.github.scribejava.core.builder.ServiceBuilder;
 import com.github.scribejava.core.model.*;
@@ -20,8 +21,12 @@ public class Zoho {
     private String accountId = null;
     private String myEmailAddress = null;
 
+    // Conjuntos para o Estado Limpo e Apagar Virtual
+    private final java.util.Set<String> ignoredZohoIds = new java.util.HashSet<>();
+    private final java.util.Set<String> deletedMids = new java.util.HashSet<>();
+    private boolean isCleanStateInitialized = false;
+
     static {
-        // Trust all certificates (apenas para desenvolvimento - não usar em produção)
         try {
             javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
                     new javax.net.ssl.X509TrustManager() {
@@ -48,87 +53,85 @@ public class Zoho {
     }
 
     public synchronized void fetchAccountInfo() throws Exception {
-        System.out.println("Zoho: fetchAccountInfo() iniciado...");
         OAuth2AccessToken accessToken = new OAuth2AccessToken(tokenManager.getValidAccessToken());
         OAuthRequest request = new OAuthRequest(Verb.GET, MAIL_API_BASE + "/accounts");
         service.signRequest(accessToken, request);
+
         try (Response response = service.execute(request)) {
-            System.out.println("Zoho: fetchAccountInfo response code: " + response.getCode());
             if(response.isSuccessful()) {
-                String body = response.getBody();
-                System.out.println("Zoho: fetchAccountInfo body: " + body);
-                ZohoAccountReply reply = gson.fromJson(body, ZohoAccountReply.class);
+                ZohoAccountReply reply = gson.fromJson(response.getBody(), ZohoAccountReply.class);
                 if (reply != null && reply.data != null && !reply.data.isEmpty()) {
                     this.accountId = reply.data.get(0).accountId;
-                    this.myEmailAddress = reply.data.get(0).primaryEmailAddress;
-                    System.out.println("Zoho: accountId = " + this.accountId);
-                    System.out.println("Zoho: myEmailAddress = " + this.myEmailAddress);
-                } else {
-                    System.err.println("Zoho: fetchAccountInfo - no data in reply");
+                    this.myEmailAddress = reply.data.get(0).incomingUserName;
                 }
-            } else {
-                System.err.println("Zoho: fetchAccountInfo failed: " + response.getCode() + " - " + response.getBody());
             }
         }
+    }
+
+    private synchronized void initCleanState() throws Exception {
+        if (isCleanStateInitialized) return;
+        System.out.println("Zoho: A inicializar estado limpo (ignorando mensagens antigas)...");
+        if (this.accountId == null) fetchAccountInfo();
+        if (this.accountId != null) {
+            OAuth2AccessToken accessToken = new OAuth2AccessToken(tokenManager.getValidAccessToken());
+            OAuthRequest request = new OAuthRequest(Verb.GET, MAIL_API_BASE + "/accounts/" + accountId + "/messages/view");
+            service.signRequest(accessToken, request);
+            try (Response response = service.execute(request)) {
+                if (response.isSuccessful()) {
+                    ZohoMessageListReply reply = gson.fromJson(response.getBody(), ZohoMessageListReply.class);
+                    if (reply != null && reply.data != null) {
+                        for (ZohoMessageData m : reply.data) {
+                            ignoredZohoIds.add(m.messageId);
+                        }
+                    }
+                    System.out.println("Zoho: Ignoradas " + ignoredZohoIds.size() + " mensagens que ja la estavam (Lixo).");
+                }
+            }
+        }
+        isCleanStateInitialized = true;
+    }
+
+    public synchronized void deleteMessage(String mid) {
+        deletedMids.add(mid);
+        System.out.println("Zoho: Mensagem " + mid + " apagada virtualmente.");
     }
 
     public synchronized String sendEmail(Message msg) throws Exception {
-        // Garantir que temos accountId e email
-        if (this.accountId == null || this.myEmailAddress == null) {
-            System.out.println("Zoho: sendEmail - fetching account info first...");
-            fetchAccountInfo();
-        }
-        if (this.accountId == null || this.myEmailAddress == null) {
-            System.err.println("Zoho: sendEmail - accountId or email is null, cannot send.");
-            return null;
-        }
+        if (!isCleanStateInitialized) initCleanState();
+
+        if (this.accountId == null || this.myEmailAddress == null) fetchAccountInfo();
+        if (this.accountId == null || this.myEmailAddress == null) return null;
 
         OAuth2AccessToken accessToken = new OAuth2AccessToken(tokenManager.getValidAccessToken());
-
-        // Endpoint oficial para envio
         OAuthRequest request = new OAuthRequest(Verb.POST, MAIL_API_BASE + "/accounts/" + accountId + "/messages");
 
-        // Garantir que o conteúdo nunca é nulo
-        String bodyText = (msg.getContents() == null || msg.getContents().isEmpty()) ? "Empty message body" : msg.getContents();
+        String jsonMsg = gson.toJson(msg);
+        String base64Json = Base64.getEncoder().encodeToString(jsonMsg.getBytes());
 
-        // Para filtrar na leitura, colocamos o destinatário no assunto (ex: ourorg0+0001|to:derek.pippen6@ourorg1)
-// Em vez de tentarmos buscar o primeiro elemento com .get(0), juntamos todos os destinatários separados por vírgula
-        String recipient = (msg.getDestination() != null && !msg.getDestination().isEmpty()) ? String.join(",", msg.getDestination()) : "unknown";        String subject = msg.getId() + "|to:" + recipient;
+        String originalContent = (msg.getContents() == null) ? "" : msg.getContents();
+        String bodyText = originalContent + "<br>------<br>" + base64Json;
+
+        String recipient = (msg.getDestination() != null && !msg.getDestination().isEmpty()) ?
+                msg.getDestination().iterator().next() : "unknown";
+
+        String subject = msg.getId() + "|to:" + recipient;
 
         ZohoSendEmailRequest payload = new ZohoSendEmailRequest(
-                this.myEmailAddress,
-                this.myEmailAddress,  // envia para si mesmo (a conta Zoho)
-                subject,
-                bodyText);
-
-        String jsonPayload = gson.toJson(payload);
-        System.out.println("Zoho: sendEmail payload: " + jsonPayload);
+                this.myEmailAddress, this.myEmailAddress, subject, bodyText);
 
         request.addHeader("Content-Type", "application/json");
-        request.setPayload(jsonPayload);
+        request.setPayload(gson.toJson(payload));
         service.signRequest(accessToken, request);
 
         try (Response response = service.execute(request)) {
-            System.out.println("Zoho: sendEmail response code: " + response.getCode());
-            if (response.isSuccessful()) {
-                System.out.println("Zoho: Email enviado com sucesso! ID: " + msg.getId());
-                return msg.getId();
-            } else {
-                System.err.println("Zoho Error " + response.getCode() + ": " + response.getBody());
-                return null;
-            }
+            return response.isSuccessful() ? msg.getId() : null;
         }
     }
 
-    public synchronized List<String> getAllMessages() throws Exception {
-        if (this.accountId == null || this.myEmailAddress == null) {
-            System.out.println("Zoho: getAllMessages - fetching account info first...");
-            fetchAccountInfo();
-        }
-        if (this.accountId == null) {
-            System.err.println("Zoho: getAllMessages - accountId is null, cannot list messages.");
-            return List.of();
-        }
+    public synchronized List<String> getAllMessages(String expectedRecipient) throws Exception {
+        if (!isCleanStateInitialized) initCleanState();
+        if (this.accountId == null || this.myEmailAddress == null) fetchAccountInfo();
+        if (this.accountId == null) return List.of();
 
         for (int i = 0; i < 3; i++) {
             OAuth2AccessToken accessToken = new OAuth2AccessToken(tokenManager.getValidAccessToken());
@@ -136,35 +139,85 @@ public class Zoho {
             service.signRequest(accessToken, request);
 
             try (Response response = service.execute(request)) {
-                System.out.println("Zoho: getAllMessages response code: " + response.getCode());
                 if(response.isSuccessful()) {
-                    String body = response.getBody();
-                    System.out.println("Zoho: getAllMessages body: " + body);
-                    ZohoMessageListReply reply = gson.fromJson(body, ZohoMessageListReply.class);
+                    ZohoMessageListReply reply = gson.fromJson(response.getBody(), ZohoMessageListReply.class);
                     if (reply != null && reply.data != null && !reply.data.isEmpty()) {
-                        // Devolve todos os IDs (sem filtro aqui – o filtro será feito no proxy)
-                        List<String> allIds = reply.data.stream()
-                                .map(m -> m.messageId)
+                        return reply.data.stream()
+                                .filter(m -> !ignoredZohoIds.contains(m.messageId)) // Esconde lixo antigo
+                                .filter(m -> m.subject != null && m.subject.contains("|to:" + expectedRecipient))
+                                .map(m -> m.subject.split("\\|to:")[0])
+                                .filter(mid -> !deletedMids.contains(mid)) // Esconde as apagadas
                                 .toList();
-                        System.out.println("Zoho: getAllMessages encontrou " + allIds.size() + " mensagens: " + allIds);
-                        return allIds;
-                    } else {
-                        System.out.println("Zoho: getAllMessages - nenhuma mensagem na caixa de entrada.");
                     }
-                } else {
-                    System.err.println("Zoho: getAllMessages failed: " + response.getCode() + " - " + response.getBody());
                 }
             }
-            System.out.println("Zoho: Inbox vazia, a aguardar 2s... (Tentativa " + (i+1) + ")");
             Thread.sleep(2000);
         }
         return List.of();
     }
 
-    // Inner classes para parsing do JSON
+    public synchronized Message getMessage(String mid) throws Exception {
+        if (deletedMids.contains(mid)) return null; // Se foi apagada virtualmente
+
+        if (!isCleanStateInitialized) initCleanState();
+        if (this.accountId == null) fetchAccountInfo();
+
+        String zohoMsgId = null;
+        String folderId = null;
+
+        for (int i = 0; i < 3; i++) {
+            OAuth2AccessToken accessToken = new OAuth2AccessToken(tokenManager.getValidAccessToken());
+            OAuthRequest listReq = new OAuthRequest(Verb.GET, MAIL_API_BASE + "/accounts/" + accountId + "/messages/view");
+            service.signRequest(accessToken, listReq);
+
+            try (Response response = service.execute(listReq)) {
+                if (response.isSuccessful()) {
+                    ZohoMessageListReply reply = gson.fromJson(response.getBody(), ZohoMessageListReply.class);
+                    if (reply != null && reply.data != null) {
+                        for (ZohoMessageData m : reply.data) {
+                            if (!ignoredZohoIds.contains(m.messageId) && m.subject != null && m.subject.startsWith(mid + "|to:")) {
+                                zohoMsgId = m.messageId;
+                                folderId = m.folderId;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (zohoMsgId != null) break;
+            Thread.sleep(2000);
+        }
+
+        if (zohoMsgId == null || folderId == null) return null;
+
+        OAuth2AccessToken accessToken = new OAuth2AccessToken(tokenManager.getValidAccessToken());
+        OAuthRequest msgReq = new OAuthRequest(Verb.GET,
+                MAIL_API_BASE + "/accounts/" + accountId + "/folders/" + folderId + "/messages/" + zohoMsgId + "/content");
+        service.signRequest(accessToken, msgReq);
+
+        try (Response response = service.execute(msgReq)) {
+            if (response.isSuccessful()) {
+                ZohoSingleMessageReply reply = gson.fromJson(response.getBody(), ZohoSingleMessageReply.class);
+                if (reply != null && reply.data != null && reply.data.content != null) {
+                    String[] parts = reply.data.content.split("------");
+                    if (parts.length > 1) {
+                        String base64Json = parts[parts.length - 1].replaceAll("<[^>]*>", "").trim();
+                        try {
+                            String jsonMsg = new String(Base64.getDecoder().decode(base64Json));
+                            return gson.fromJson(jsonMsg, Message.class);
+                        } catch (Exception e) {}
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     class ZohoAccountReply { List<ZohoAccount> data; }
-    class ZohoAccount { String accountId; String primaryEmailAddress; }
+    class ZohoAccount { String accountId; String incomingUserName; }
     record ZohoSendEmailRequest(String fromAddress, String toAddress, String subject, String content) {}
     class ZohoMessageListReply { List<ZohoMessageData> data; }
-    class ZohoMessageData { String messageId; String subject; }
+    class ZohoMessageData { String messageId; String subject; String folderId; }
+    class ZohoSingleMessageReply { ZohoSingleMessageData data; }
+    class ZohoSingleMessageData { String content; }
 }
