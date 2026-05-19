@@ -18,7 +18,8 @@ import sd2526.trab.impl.java.servers.JavaMessages;
 @Singleton
 public class RestMessagesResource extends RestResource implements RestMessages, RestAdminMessages {
 
-	static boolean isGateway = false;
+	public static boolean isGateway = false;
+	public static boolean isProxy = false; // NOVO: Flag para ativar o modo Proxy (Zoho)
 	private static final String SERVER_SECRET = "SD2526-Password-Secreta";
 
 	@Context
@@ -27,8 +28,16 @@ public class RestMessagesResource extends RestResource implements RestMessages, 
 	Messages impl;
 
 	synchronized Messages impl() {
-		if( impl == null )
-			impl = isGateway ? Clients.MessagesClient.get() : JavaMessages.getInstance();
+		if( impl == null ) {
+			// Lógica de encaminhamento: Gateway, Proxy (Zoho) ou Base de Dados (Normal)
+			if (isGateway) {
+				impl = Clients.MessagesClient.get();
+			} else if (isProxy) {
+				impl = sd2526.trab.impl.java.servers.JavaMessagesProxy.getInstance();
+			} else {
+				impl = JavaMessages.getInstance();
+			}
+		}
 		return impl;
 	}
 

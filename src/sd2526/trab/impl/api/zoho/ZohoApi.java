@@ -6,18 +6,11 @@ public class ZohoApi extends DefaultApi20 {
     private static class InstanceHolder {
         private static final ZohoApi INSTANCE = new ZohoApi();
     }
-
-    public static ZohoApi instance() {
-        return InstanceHolder.INSTANCE;
-    }
+    public static ZohoApi instance() { return InstanceHolder.INSTANCE; }
 
     @Override
-    public String getAccessTokenEndpoint() {
-        return "https://accounts.zoho.eu/oauth/v2/token";
-    }
+    public String getAccessTokenEndpoint() { return "https://accounts.zoho.eu/oauth/v2/token"; }
 
     @Override
-    protected String getAuthorizationBaseUrl() {
-        return "https://accounts.zoho.eu/oauth/v2/auth";
-    }
+    protected String getAuthorizationBaseUrl() { return "https://accounts.zoho.eu/oauth/v2/auth"; }
 }

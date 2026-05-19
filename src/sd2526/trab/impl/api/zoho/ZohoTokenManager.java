@@ -14,7 +14,6 @@ public class ZohoTokenManager {
     }
 
     public synchronized String getValidAccessToken() throws Exception {
-        // Pede um token novo se ainda não houver um, ou se o atual expirou
         if (accessToken == null || System.currentTimeMillis() >= (accessToken.getExpiresIn() * 1000L)) {
             accessToken = service.refreshAccessToken(refreshToken);
         }
