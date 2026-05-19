@@ -92,8 +92,8 @@ public class Zoho {
         String bodyText = (msg.getContents() == null || msg.getContents().isEmpty()) ? "Empty message body" : msg.getContents();
 
         // Para filtrar na leitura, colocamos o destinatário no assunto (ex: ourorg0+0001|to:derek.pippen6@ourorg1)
-        String recipient = (msg.getDestination() != null && !msg.getDestination().isEmpty()) ? msg.getDestination().get(0) : "unknown";
-        String subject = msg.getId() + "|to:" + recipient;
+// Em vez de tentarmos buscar o primeiro elemento com .get(0), juntamos todos os destinatários separados por vírgula
+        String recipient = (msg.getDestination() != null && !msg.getDestination().isEmpty()) ? String.join(",", msg.getDestination()) : "unknown";        String subject = msg.getId() + "|to:" + recipient;
 
         ZohoSendEmailRequest payload = new ZohoSendEmailRequest(
                 this.myEmailAddress,
