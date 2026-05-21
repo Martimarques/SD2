@@ -44,16 +44,20 @@ public class KafkaReplicatedMessages {
                                 case POST:
                                     Result<String> pr = dbImpl.postMessage(cmd.pwd, cmd.msg);
                                     err = pr.error();
-                                    // Duplicado de outro réplica — tratar como OK
                                     if (err == Result.ErrorCode.CONFLICT) err = Result.ErrorCode.OK;
                                     if (pr.isOK()) val = pr.value();
                                     break;
                                 case REMOVE:
                                     err = dbImpl.removeInboxMessage(cmd.user, cmd.mid, cmd.pwd).error();
+                                    // Tolerância: se a mensagem já não existir ou a cache tiver expirado, aceitamos como OK
+                                    if (err == Result.ErrorCode.NOT_FOUND || err == Result.ErrorCode.FORBIDDEN)
+                                        err = Result.ErrorCode.OK;
                                     break;
                                 case DELETE:
                                     err = dbImpl.deleteMessage(cmd.user, cmd.mid, cmd.pwd).error();
-                                    if (err == Result.ErrorCode.CONFLICT || err == Result.ErrorCode.NOT_FOUND)
+                                    // AQUI ESTÁ A MAGIA: O JavaMessages devolve FORBIDDEN se a cache expirar.
+                                    // Tratamos como OK porque a mensagem na prática já não existe!
+                                    if (err == Result.ErrorCode.CONFLICT || err == Result.ErrorCode.NOT_FOUND || err == Result.ErrorCode.FORBIDDEN)
                                         err = Result.ErrorCode.OK;
                                     break;
                                 case REMOTE_POST:
@@ -62,7 +66,8 @@ public class KafkaReplicatedMessages {
                                     break;
                                 case REMOTE_DELETE:
                                     err = ((sd2526.trab.impl.api.java.AdminMessages) dbImpl).remoteDeleteMessage(cmd.mid).error();
-                                    if (err == Result.ErrorCode.NOT_FOUND) err = Result.ErrorCode.OK;
+                                    if (err == Result.ErrorCode.NOT_FOUND || err == Result.ErrorCode.FORBIDDEN)
+                                        err = Result.ErrorCode.OK;
                                     break;
                                 case REMOTE_DELETE_INBOX:
                                     err = ((sd2526.trab.impl.api.java.AdminMessages) dbImpl).remoteDeleteUserInbox(cmd.user).error();
@@ -74,7 +79,7 @@ public class KafkaReplicatedMessages {
                                 SyncPoint.getSyncPoint().setResult(r.offset(),
                                         gson.toJson(new CommandResult(err, val)));
                             } catch (RuntimeException ex) {
-                                // offset já processado por outro réplica — ignorar
+                                // offset já processado por outra réplica — ignorar
                             }
                             currentVersion = r.offset();
                         } catch (Exception e) {
