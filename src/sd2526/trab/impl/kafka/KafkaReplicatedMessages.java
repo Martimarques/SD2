@@ -8,10 +8,20 @@ import java.util.List;
 
 public class KafkaReplicatedMessages {
     private static final Gson gson = new Gson();
-    public static final String TOPIC = "messages_topic";
     public static final String KAFKA_BROKERS = "kafka:9092,localhost:9092";
-
     public static volatile long currentVersion = -1;
+
+    // Tópico por domínio: cada domínio tem o seu próprio tópico Kafka
+    public static final String TOPIC;
+    static {
+        String temp = "default";
+        try {
+            String host = java.net.InetAddress.getLocalHost().getHostName();
+            if (host.contains(".")) temp = host.substring(host.indexOf('.') + 1);
+            else temp = host;
+        } catch (Exception e) {}
+        TOPIC = "messages_" + temp;
+    }
 
     private static KafkaPublisher publisher;
     private static boolean initialized = false;
@@ -34,6 +44,8 @@ public class KafkaReplicatedMessages {
                                 case POST:
                                     Result<String> pr = dbImpl.postMessage(cmd.pwd, cmd.msg);
                                     err = pr.error();
+                                    // Duplicado de outro réplica — tratar como OK
+                                    if (err == Result.ErrorCode.CONFLICT) err = Result.ErrorCode.OK;
                                     if (pr.isOK()) val = pr.value();
                                     break;
                                 case REMOVE:
@@ -41,14 +53,35 @@ public class KafkaReplicatedMessages {
                                     break;
                                 case DELETE:
                                     err = dbImpl.deleteMessage(cmd.user, cmd.mid, cmd.pwd).error();
+                                    if (err == Result.ErrorCode.CONFLICT || err == Result.ErrorCode.NOT_FOUND)
+                                        err = Result.ErrorCode.OK;
+                                    break;
+                                case REMOTE_POST:
+                                    err = ((sd2526.trab.impl.api.java.AdminMessages) dbImpl).remotePostMessage(cmd.msg).error();
+                                    if (err == Result.ErrorCode.CONFLICT) err = Result.ErrorCode.OK;
+                                    break;
+                                case REMOTE_DELETE:
+                                    err = ((sd2526.trab.impl.api.java.AdminMessages) dbImpl).remoteDeleteMessage(cmd.mid).error();
+                                    if (err == Result.ErrorCode.NOT_FOUND) err = Result.ErrorCode.OK;
+                                    break;
+                                case REMOTE_DELETE_INBOX:
+                                    err = ((sd2526.trab.impl.api.java.AdminMessages) dbImpl).remoteDeleteUserInbox(cmd.user).error();
+                                    if (err == Result.ErrorCode.NOT_FOUND) err = Result.ErrorCode.OK;
                                     break;
                             }
 
-                            SyncPoint.getSyncPoint().setResult(r.offset(), gson.toJson(new CommandResult(err, val)));
+                            try {
+                                SyncPoint.getSyncPoint().setResult(r.offset(),
+                                        gson.toJson(new CommandResult(err, val)));
+                            } catch (RuntimeException ex) {
+                                // offset já processado por outro réplica — ignorar
+                            }
                             currentVersion = r.offset();
                         } catch (Exception e) {
-                            SyncPoint.getSyncPoint().setResult(r.offset(),
-                                    gson.toJson(new CommandResult(Result.ErrorCode.INTERNAL_ERROR, null)));
+                            try {
+                                SyncPoint.getSyncPoint().setResult(r.offset(),
+                                        gson.toJson(new CommandResult(Result.ErrorCode.INTERNAL_ERROR, null)));
+                            } catch (RuntimeException ex) { /* ignorar */ }
                         }
                     });
 
@@ -69,9 +102,8 @@ public class KafkaReplicatedMessages {
         return dbImpl;
     }
 
-    // --- DTOs públicos para o Resource os usar ---
     public static class KafkaCommand {
-        public enum OpType { POST, REMOVE, DELETE }
+        public enum OpType { POST, REMOVE, DELETE, REMOTE_POST, REMOTE_DELETE, REMOTE_DELETE_INBOX }
         public OpType type; public String pwd; public Message msg; public String user; public String mid;
         public KafkaCommand(OpType t, String p, Message m, String u, String id) {
             type=t; pwd=p; msg=m; user=u; mid=id;

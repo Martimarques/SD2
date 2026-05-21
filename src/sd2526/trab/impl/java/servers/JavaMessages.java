@@ -240,9 +240,15 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 		return deleteFromLocalInbox(mid);
 	}
 
-	protected Result<Message> getCachedMessage( String mid ) {
-		var msg = messagesCache.getIfPresent( mid );
-		return msg != null ? ok( msg ) : error( FORBIDDEN );
+	protected Result<Message> getCachedMessage(String mid) {
+		var msg = messagesCache.getIfPresent(mid);
+		if (msg != null) return ok(msg);
+		var dbResult = DB.getOne(mid, Message.class);
+		if (dbResult.isOK()) {
+			messagesCache.put(mid, dbResult.value());
+			return dbResult;
+		}
+		return error(FORBIDDEN);
 	}
 
 	public final class JobDispatcher {

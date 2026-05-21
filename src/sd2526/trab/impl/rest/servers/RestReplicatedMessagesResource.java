@@ -1,98 +1,163 @@
 package sd2526.trab.impl.rest.servers;
 
 import com.google.gson.Gson;
-import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.*;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.container.ContainerRequestFilter;
 import jakarta.ws.rs.container.ContainerResponseContext;
 import jakarta.ws.rs.container.ContainerResponseFilter;
+import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response.Status;
 import jakarta.ws.rs.ext.Provider;
 import sd2526.trab.api.Message;
 import sd2526.trab.api.java.Result;
 import sd2526.trab.api.rest.RestMessages;
+import sd2526.trab.impl.api.rest.RestAdminMessages;
 import sd2526.trab.impl.kafka.KafkaReplicatedMessages;
 import sd2526.trab.impl.kafka.SyncPoint;
+
 import java.util.List;
 
-public class RestReplicatedMessagesResource implements RestMessages {
-    private static final Gson gson = new Gson();
-    // Singleton — instanciado uma vez, partilhado por todos os requests
-    private static final KafkaReplicatedMessages kafka = new KafkaReplicatedMessages();
+@Path(RestMessages.PATH)
+public class RestReplicatedMessagesResource implements RestMessages, RestAdminMessages {
 
-    // --- Auxiliares ---
-    private String safeWait(long offset) {
-        String res = null;
+    static final KafkaReplicatedMessages kafka = new KafkaReplicatedMessages();
+    static final Gson gson = new Gson();
+
+    // -----------------------------------------------------------------------
+    // Utilitário: espera pelo resultado do Kafka e lança exceção se erro
+    // -----------------------------------------------------------------------
+    private KafkaReplicatedMessages.CommandResult waitAndParseResult(long offset) {
+        String res = SyncPoint.getSyncPoint().waitForResult(offset);
         while (res == null) {
+            try { Thread.sleep(50); } catch (Exception ignored) {}
             res = SyncPoint.getSyncPoint().waitForResult(offset);
-            if (res == null) { try { Thread.sleep(50); } catch (Exception e) {} }
         }
-        return res;
+        return gson.fromJson(res, KafkaReplicatedMessages.CommandResult.class);
     }
 
-    private Status toStatus(Result.ErrorCode err) {
-        return switch (err) {
-            case NOT_FOUND  -> Status.NOT_FOUND;
-            case CONFLICT   -> Status.CONFLICT;
-            case FORBIDDEN  -> Status.FORBIDDEN;
+    private void throwIfError(KafkaReplicatedMessages.CommandResult cr) {
+        if (cr.error == Result.ErrorCode.OK) return;
+        Status s = switch (cr.error) {
+            case NOT_FOUND   -> Status.NOT_FOUND;
+            case CONFLICT    -> Status.CONFLICT;
+            case FORBIDDEN   -> Status.FORBIDDEN;
             case BAD_REQUEST -> Status.BAD_REQUEST;
-            default         -> Status.INTERNAL_SERVER_ERROR;
+            default          -> Status.INTERNAL_SERVER_ERROR;
         };
+        throw new WebApplicationException(s);
     }
 
-    // --- Implementação REST ---
+    // -----------------------------------------------------------------------
+    // RestMessages — operações de escrita passam pelo Kafka
+    // -----------------------------------------------------------------------
+
     @Override
-    public String postMessage(String pwd, Message msg) {
+    @POST
+    @Path("/")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public String postMessage(@QueryParam(RestMessages.PWD) String pwd, Message msg) {
         long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.POST, pwd, msg, null, null);
-        KafkaReplicatedMessages.CommandResult res =
-                gson.fromJson(safeWait(offset), KafkaReplicatedMessages.CommandResult.class);
-        if (res.error == Result.ErrorCode.OK) return res.value;
-        throw new WebApplicationException(toStatus(res.error));
+        KafkaReplicatedMessages.CommandResult cr = waitAndParseResult(offset);
+        throwIfError(cr);
+        return cr.value;
     }
 
     @Override
-    public void removeFromUserInbox(String name, String mid, String pwd) {
+    @DELETE
+    @Path(RestMessages.MBOX + "/{" + RestMessages.NAME + "}/{" + RestMessages.MID + "}")
+    public void removeFromUserInbox(@PathParam(RestMessages.NAME) String name,
+                                    @PathParam(RestMessages.MID) String mid,
+                                    @QueryParam(RestMessages.PWD) String pwd) {
         long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.REMOVE, pwd, null, name, mid);
-        KafkaReplicatedMessages.CommandResult res =
-                gson.fromJson(safeWait(offset), KafkaReplicatedMessages.CommandResult.class);
-        if (res.error != Result.ErrorCode.OK) throw new WebApplicationException(toStatus(res.error));
+        throwIfError(waitAndParseResult(offset));
     }
 
     @Override
-    public void deleteMessage(String name, String mid, String pwd) {
+    @DELETE
+    @Path("/{" + RestMessages.NAME + "}/{" + RestMessages.MID + "}")
+    public void deleteMessage(@PathParam(RestMessages.NAME) String name,
+                              @PathParam(RestMessages.MID) String mid,
+                              @QueryParam(RestMessages.PWD) String pwd) {
         long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.DELETE, pwd, null, name, mid);
-        KafkaReplicatedMessages.CommandResult res =
-                gson.fromJson(safeWait(offset), KafkaReplicatedMessages.CommandResult.class);
-        if (res.error != Result.ErrorCode.OK) throw new WebApplicationException(toStatus(res.error));
+        throwIfError(waitAndParseResult(offset));
     }
 
+    // -----------------------------------------------------------------------
+    // RestMessages — leituras diretas da BD (não passam pelo Kafka)
+    // -----------------------------------------------------------------------
+
     @Override
-    public Message getMessage(String name, String mid, String pwd) {
+    @GET
+    @Path(RestMessages.MBOX + "/{" + RestMessages.NAME + "}/{" + RestMessages.MID + "}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Message getMessage(@PathParam(RestMessages.NAME) String name,
+                              @PathParam(RestMessages.MID) String mid,
+                              @QueryParam(RestMessages.PWD) String pwd) {
         Result<Message> r = KafkaReplicatedMessages.getDb().getInboxMessage(name, mid, pwd);
         if (r.isOK()) return r.value();
-        throw new WebApplicationException(toStatus(r.error()));
+        throwIfError(new KafkaReplicatedMessages.CommandResult(r.error(), null));
+        return null;
     }
 
     @Override
-    public List<String> getMessages(String name, String pwd, String query) {
+    @GET
+    @Path(RestMessages.MBOX + "/{" + RestMessages.NAME + "}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public List<String> getMessages(@PathParam(RestMessages.NAME) String name,
+                                    @QueryParam(RestMessages.PWD) String pwd,
+                                    @QueryParam(RestMessages.QUERY) @DefaultValue("") String query) {
         Result<List<String>> r = (query != null && !query.isEmpty())
                 ? KafkaReplicatedMessages.getDb().searchInbox(name, pwd, query)
                 : KafkaReplicatedMessages.getDb().getAllInboxMessages(name, pwd);
         if (r.isOK()) return r.value();
-        throw new WebApplicationException(toStatus(r.error()));
+        throwIfError(new KafkaReplicatedMessages.CommandResult(r.error(), null));
+        return null;
     }
 
-    // --- Filtro Causal ---
+    // -----------------------------------------------------------------------
+    // RestAdminMessages — comunicação entre domínios, passa pelo Kafka
+    // -----------------------------------------------------------------------
+
+    @Override
+    @POST
+    @Path(RestAdminMessages.ADMIN)
+    @Consumes(MediaType.APPLICATION_JSON)
+    public void remotePostMessage(Message msg) {
+        long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.REMOTE_POST, null, msg, null, null);
+        waitAndParseResult(offset); // sem verificar erro (duplicados são OK)
+    }
+
+    @Override
+    @DELETE
+    @Path(RestAdminMessages.ADMIN + "/{" + RestAdminMessages.MID + "}")
+    public void remoteDeleteMessage(@PathParam(RestAdminMessages.MID) String mid) {
+        long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.REMOTE_DELETE, null, null, null, mid);
+        waitAndParseResult(offset);
+    }
+
+    @Override
+    @DELETE
+    @Path(RestAdminMessages.ADMIN + "/" + RestAdminMessages.INBOX + "/{" + RestAdminMessages.NAME + "}")
+    public void remoteDeleteUserInbox(@PathParam(RestAdminMessages.NAME) String name) {
+        long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.REMOTE_DELETE_INBOX, null, null, name, null);
+        waitAndParseResult(offset);
+    }
+
+    // -----------------------------------------------------------------------
+    // Filtro de Causalidade (X-MESSAGES header)
+    // -----------------------------------------------------------------------
+
     @Provider
     public static class CausalFilter implements ContainerRequestFilter, ContainerResponseFilter {
-        private static final String HEADER = "X-MESSAGES";
 
         @Override
         public void filter(ContainerRequestContext req) {
-            String cv = req.getHeaderString(HEADER);
-            if (cv != null && !cv.isEmpty()) {
+            String cv = req.getHeaderString("X-MESSAGES");
+            if (cv != null && !cv.isBlank()) {
                 try {
-                    long target = Long.parseLong(cv);
+                    long target = Long.parseLong(cv.trim());
                     while (KafkaReplicatedMessages.currentVersion < target) {
                         Thread.sleep(50);
                     }
@@ -103,7 +168,7 @@ public class RestReplicatedMessagesResource implements RestMessages {
         @Override
         public void filter(ContainerRequestContext req, ContainerResponseContext res) {
             if (KafkaReplicatedMessages.currentVersion >= 0)
-                res.getHeaders().add(HEADER, String.valueOf(KafkaReplicatedMessages.currentVersion));
+                res.getHeaders().add("X-MESSAGES", String.valueOf(KafkaReplicatedMessages.currentVersion));
         }
     }
 }
