@@ -20,7 +20,7 @@ import org.hibernate.exception.ConstraintViolationException;
 
 import sd2526.trab.api.java.Result;
 import sd2526.trab.api.java.Result.ErrorCode;
-
+import sd2526.trab.impl.java.servers.InboxEntry;
 
 
 /**
@@ -149,5 +149,13 @@ public class Hibernate {
 				return error(ErrorCode.INTERNAL_ERROR);
 			}
 		}
+
+		public <T> Result<T> persistIfNotExists(Object id, Class<T> clazz, T obj) {
+			if (session.find(clazz, id) != null) {
+				return ok(obj); // já existe
+			}
+			return persistOne(obj);
+		}
+
 	}
 }

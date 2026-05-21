@@ -157,16 +157,22 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 	}
 
 	private void deliverToKnownLocalRecipients(Collection<String> addresses, Message msg) {
-		Log.info( () -> "deliverToKnownLocalRecipients : local known addresses = %s, msg = %s\n".formatted(addresses, msg));
-
 		DB.transaction((hibernate) -> {
-			hibernate.persistOne( msg );
-			for( var address : addresses )
-				hibernate.persistOne( new InboxEntry( msg.getId(), getName(address) ));
-
+			// Verificar se a mensagem já existe (por id)
+			Result<Message> existing = hibernate.getOne(msg.getId(), Message.class);
+			if (existing.isOK()) {
+				// Mensagem já processada - apenas garantir que os destinatários locais estão na inbox
+				for (var address : addresses) {
+					hibernate.persistIfNotExists(msg.getId(), Message.class, msg);
+				}
+				return ok();
+			}
+			// Caso contrário, inserir normalmente
+			hibernate.persistOne(msg);
+			for (var address : addresses)
+				hibernate.persistOne(new InboxEntry(msg.getId(), getName(address)));
 			return ok();
 		});
-
 	}
 
 	private void reportUnknownLocalRecipients(Collection<String> addresses, Message msg) {
