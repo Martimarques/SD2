@@ -114,6 +114,10 @@ public class Zoho {
 
     // CORREÇÃO 3: Removido o synchronized daqui para permitir a entrada de retransmissões em tempo real!
     public String sendEmail(Message msg) throws Exception {
+        return sendEmail(msg, null);
+    }
+
+    public String sendEmail(Message msg, String explicitRecipient) throws Exception {
         if (!isCleanStateInitialized) initCleanState();
 
         if (this.accountId == null || this.myEmailAddress == null) fetchAccountInfo();
@@ -128,8 +132,13 @@ public class Zoho {
         String originalContent = (msg.getContents() == null) ? "" : msg.getContents();
         String bodyText = originalContent + "<br>------<br>" + base64Json;
 
-        String recipient = (msg.getDestination() != null && !msg.getDestination().isEmpty()) ?
-                msg.getDestination().iterator().next() : "unknown";
+        String recipient;
+        if (explicitRecipient != null) {
+            recipient = explicitRecipient;
+        } else {
+            recipient = (msg.getDestination() != null && !msg.getDestination().isEmpty()) ?
+                    msg.getDestination().iterator().next() : "unknown";
+        }
 
         String subject = msg.getId() + "|to:" + recipient;
 
@@ -183,8 +192,8 @@ public class Zoho {
 
                         // Se for uma leitura normal (maxTentativas=3), devolve logo o que encontrar.
                         // Se estivermos em recuperação de falha (maxTentativas=8),
-                        // só devolve logo se tiver encontrado mensagens "novas" ou múltiplas mensagens.
-                        if (maxTentativas == 3 || lastKnownList.size() > 1) {
+                        // devolve logo que tiver encontrado pelo menos 1 mensagem.
+                        if (maxTentativas == 3 || lastKnownList.size() >= 1) {
                             return lastKnownList;
                         }
                     }

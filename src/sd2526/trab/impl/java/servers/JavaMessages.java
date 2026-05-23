@@ -41,6 +41,7 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 
 	final JobDispatcher jobs;
 	final AtomicLong counter = new AtomicLong(0L);
+	public volatile boolean replayMode = false;
 	private static Logger Log = Logger.getLogger(JavaMessages.class.getName());
 
 
@@ -157,14 +158,19 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 	}
 
 	private void deliverToKnownLocalRecipients(Collection<String> addresses, Message msg) {
+		// Se a mensagem foi apagada recentemente (deleteMessage/remoteDeleteMessage),
+		// não re-criar. Isto previne que duplicados de remotePostMessage (causados
+		// pelo replay do Kafka após restart de réplica) recriem mensagens apagadas.
+		if (gcDeletedMessageCache.getIfPresent(msg.getId()) != null) {
+			return;
+		}
+
 		DB.transaction((hibernate) -> {
-			// Verificar se a mensagem já existe (por id)
+			// Verificar se a mensagem já existe (por id) - idempotência
 			Result<Message> existing = hibernate.getOne(msg.getId(), Message.class);
 			if (existing.isOK()) {
-				// Mensagem já processada - apenas garantir que os destinatários locais estão na inbox
-				for (var address : addresses) {
-					hibernate.persistIfNotExists(msg.getId(), Message.class, msg);
-				}
+				// Mensagem já processada - NÃO re-criar InboxEntries porque
+				// podem ter sido removidas intencionalmente (removeFromInbox/deleteMessage).
 				return ok();
 			}
 			// Caso contrário, inserir normalmente
@@ -229,7 +235,7 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 
 		var sql = "SELECT * FROM InboxEntry e WHERE e.mid = '%s'".formatted(mid);
 
-		return DB.transaction( hibernate -> {
+		var result = DB.transaction( hibernate -> {
 
 			hibernate.getOne(mid, Message.class)
 					.thenWith(msg -> hibernate.deleteOne(msg));
@@ -237,6 +243,12 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 			return hibernate.select(sql, InboxEntry.class)
 					.thenWith( (entries) -> hibernate.deleteMany( entries ) );
 		});
+
+		// Marcar mensagem como apagada para prevenir re-criação por
+		// duplicados de remotePostMessage após replay de Kafka
+		gcDeletedMessageCache.put(mid, mid);
+
+		return result;
 	}
 
 	@Override
@@ -283,6 +295,18 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 
 			msg.setId("%s+%04d".formatted(THIS_DOMAIN, counter.incrementAndGet()));
 
+			// Deteção de replay: após restart de contentor, o HSQLDB (file mode)
+			// mantém os dados. Se a mensagem já existe no DB, é um replay do Kafka
+			// → restaurar caches e saltar todo o processamento (local + remoto).
+			// Isto previne que duplicados de remotePostMessage recriem mensagens
+			// apagadas em domínios remotos.
+			var existingInDb = DB.getOne(msg.getId(), Message.class);
+			if (existingInDb.isOK()) {
+				messagesCache.put(msg.originId(), existingInDb.value());
+				messagesCache.put(msg.getId(), existingInDb.value());
+				return Result.ok(msg.getId());
+			}
+
 			messagesCache.put(msg.originId(), new Message( msg )); // For ensuring idempotency...
 
 			msg.setSender("%s <%s@%s>".formatted(sender.getDisplayName(), sender.getName(), sender.getDomain()));
@@ -297,8 +321,21 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 
 			if (localAdresses.size() > 0)
 				postToLocalInboxes(localAdresses, msg);
+			else {
+				// Sem destinatários locais: persistir a mensagem no DB para que
+				// deleteMessage consiga encontrá-la via getCachedMessage após
+				// expirar do cache (30s). Quando HÁ destinatários locais,
+				// deliverToKnownLocalRecipients já persiste a mensagem atomicamente.
+				DB.transaction((hibernate) -> {
+					Result<Message> existing = hibernate.getOne(msg.getId(), Message.class);
+					if (!existing.isOK()) {
+						hibernate.persistOne(msg);
+					}
+					return ok();
+				});
+			}
 
-			if (remoteAddresses.size() > 0) {
+			if (remoteAddresses.size() > 0 && !replayMode) {
 
 				var remoteTargets = remoteAddresses.stream().collect(
 						Collectors.groupingBy( super::getDomain, Collectors.mapping( address -> address, Collectors.toSet())));
@@ -326,7 +363,7 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 		for( var domain : domains )
 			if( domain.equals( IP.domain() ))
 				deleteFromLocalInbox( msg.getId() );
-			else
+			else if (!replayMode)
 				jobs.submit(domain, () -> {
 					super.reTry(()-> Clients.AdminMessagesClient.get(domain).remoteDeleteMessage(msg.getId()), REMOTE_COMM_DEADLINE);
 				});

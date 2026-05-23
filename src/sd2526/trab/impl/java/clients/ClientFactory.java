@@ -1,6 +1,7 @@
 package sd2526.trab.impl.java.clients;
 
 import java.net.URI;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import com.google.common.cache.CacheBuilder;
@@ -20,6 +21,7 @@ public class ClientFactory<T> {
 	private final String serviceName;
 	private final Function<String, T> restClientFunc;
 	private final Function<String, T> grpcClientFunc;
+	private final AtomicInteger roundRobin = new AtomicInteger(0);
 	
 	private LoadingCache<URI, T> clients = CacheBuilder.newBuilder()
 			.build(new CacheLoader<>() {
@@ -41,7 +43,9 @@ public class ClientFactory<T> {
 	
 	public T get(String domain) {
 		var sn = "%s@%s".formatted(serviceName, domain);
-		return get(Discovery.getInstance().knownUrisOf(sn, 1)[0]);
+		var uris = Discovery.getInstance().knownUrisOf(sn, 1);
+		var idx = Math.abs(roundRobin.getAndIncrement()) % uris.length;
+		return get(uris[idx]);
 	}
 	
 	private T newClient( String serverURI ) {

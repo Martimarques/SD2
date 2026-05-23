@@ -18,17 +18,29 @@ public class RestAdminMessagesClient extends RestClient implements AdminMessages
 
 	@Override
 	public Result<Void> remotePostMessage(Message m) {
-		return super.reTry( () -> doRemotePostMessage(m) );
+		try {
+			return doRemotePostMessage(m);
+		} catch (Exception x) {
+			return Result.error(Result.ErrorCode.TIMEOUT);
+		}
 	}
 
 	@Override
 	public Result<Void> remoteDeleteMessage(String mid) {
-		return super.reTry( () -> doRemoteDeleteMessage(mid) );
+		try {
+			return doRemoteDeleteMessage(mid);
+		} catch (Exception x) {
+			return Result.error(Result.ErrorCode.TIMEOUT);
+		}
 	}
 
 	@Override
 	public Result<Void> remoteDeleteUserInbox(String name) {
-		return super.reTry( () -> doRemoteDeleteUserInbox(name) );
+		try {
+			return doRemoteDeleteUserInbox(name);
+		} catch (Exception x) {
+			return Result.error(Result.ErrorCode.TIMEOUT);
+		}
 	}
 
 	private Result<Void> doRemotePostMessage(Message msg) {

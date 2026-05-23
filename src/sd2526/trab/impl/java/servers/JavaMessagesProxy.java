@@ -6,6 +6,7 @@ import sd2526.trab.api.java.Messages;
 import sd2526.trab.api.java.Result;
 import sd2526.trab.impl.api.java.AdminMessages;
 import sd2526.trab.impl.api.zoho.Zoho;
+import sd2526.trab.impl.utils.IP;
 
 public class JavaMessagesProxy implements Messages, AdminMessages {
 
@@ -30,7 +31,22 @@ public class JavaMessagesProxy implements Messages, AdminMessages {
     @Override
     public Result<Void> remotePostMessage(Message msg) {
         try {
-            Zoho.getInstance().sendEmail(msg);
+            // Enviar um email por cada destinatário LOCAL (do nosso domínio)
+            // para que getAllMessages consiga encontrar a mensagem por recipient.
+            String myDomain = IP.domain();
+            boolean sent = false;
+            if (msg.getDestination() != null) {
+                for (String dest : msg.getDestination()) {
+                    if (dest.endsWith("@" + myDomain)) {
+                        Zoho.getInstance().sendEmail(msg, dest);
+                        sent = true;
+                    }
+                }
+            }
+            // Fallback: se nenhum destinatário local foi encontrado, enviar normalmente
+            if (!sent) {
+                Zoho.getInstance().sendEmail(msg);
+            }
             return Result.ok();
         } catch (Exception e) {
             e.printStackTrace();

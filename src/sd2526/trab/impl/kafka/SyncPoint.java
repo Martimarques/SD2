@@ -9,7 +9,7 @@ public class SyncPoint {
 
 	private SyncPoint() {
 		this.result = new ConcurrentHashMap<Long, String>();
-		this.version = 0;
+		this.version = -1;
 	}
 
 	private static SyncPoint instance = null;

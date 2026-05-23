@@ -5,8 +5,11 @@ import sd2526.trab.api.Message;
 import sd2526.trab.api.java.Result;
 import sd2526.trab.impl.java.servers.JavaMessages;
 import sd2526.trab.impl.utils.IP;
+import org.apache.kafka.common.TopicPartition;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class KafkaReplicatedMessages {
     private static final Gson gson = new Gson();
@@ -28,6 +31,23 @@ public class KafkaReplicatedMessages {
 
                     publisher = KafkaPublisher.createPublisher(KAFKA_BROKERS);
                     KafkaSubscriber subscriber = KafkaSubscriber.createSubscriber(KAFKA_BROKERS, List.of(TOPIC));
+
+                    // Determinar o end-offset inicial do tópico para detetar replay.
+                    // Records com offset < initialEndOffset são replay do Kafka
+                    // após restart do contentor.
+                    long initialEndOffset = 0;
+                    try {
+                        var tp = new TopicPartition(TOPIC, 0);
+                        Map<TopicPartition, Long> endOffsets = subscriber.consumer.endOffsets(Collections.singletonList(tp));
+                        initialEndOffset = endOffsets.getOrDefault(tp, 0L);
+                    } catch (Exception e) {
+                        System.err.println("Aviso: não conseguiu obter end-offset do tópico: " + e.getMessage());
+                    }
+                    final long replayBoundary = initialEndOffset;
+                    if (replayBoundary > 0) {
+                        dbImpl.replayMode = true;
+                        System.out.println("Kafka replay mode: processando records até offset " + replayBoundary);
+                    }
 
                     subscriber.start(r -> {
                         try {
@@ -60,6 +80,12 @@ public class KafkaReplicatedMessages {
 
                             SyncPoint.getSyncPoint().setResult(r.offset(), gson.toJson(new CommandResult(err, val)));
                             currentVersion = r.offset();
+
+                            // Desativar replayMode quando atingimos o fim dos records pré-existentes
+                            if (dbImpl.replayMode && r.offset() >= replayBoundary - 1) {
+                                dbImpl.replayMode = false;
+                                System.out.println("Kafka replay completo no offset " + r.offset());
+                            }
                         } catch (Exception e) {
                             e.printStackTrace();
                             SyncPoint.getSyncPoint().setResult(r.offset(),

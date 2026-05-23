@@ -6,6 +6,8 @@ import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.container.ContainerRequestFilter;
 import jakarta.ws.rs.container.ContainerResponseContext;
 import jakarta.ws.rs.container.ContainerResponseFilter;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response.Status;
 import jakarta.ws.rs.ext.Provider;
@@ -21,18 +23,27 @@ import java.util.List;
 @Path(RestMessages.PATH)
 public class RestReplicatedMessagesResource implements RestMessages, RestAdminMessages {
 
+    private static final String SERVER_SECRET = "SD2526-Password-Secreta";
+
     static final KafkaReplicatedMessages kafka = new KafkaReplicatedMessages();
     static final Gson gson = new Gson();
+
+    @Context
+    HttpHeaders headers;
 
     // -----------------------------------------------------------------------
     // Utilitário: espera pelo resultado do Kafka e lança exceção se erro
     // -----------------------------------------------------------------------
-    private KafkaReplicatedMessages.CommandResult waitAndParseResult(long offset) {
-        String res = SyncPoint.getSyncPoint().waitForResult(offset);
-        while (res == null) {
-            try { Thread.sleep(50); } catch (Exception ignored) {}
-            res = SyncPoint.getSyncPoint().waitForResult(offset);
+    private void checkSecret() {
+        List<String> secret = headers.getRequestHeader("X-Server-Secret");
+        if (secret == null || secret.isEmpty() || !SERVER_SECRET.equals(secret.get(0))) {
+            throw new WebApplicationException(Status.FORBIDDEN);
         }
+    }
+
+    private KafkaReplicatedMessages.CommandResult waitAndParseResult(long offset) {
+        SyncPoint.getSyncPoint().waitForVersion(offset);
+        String res = SyncPoint.getSyncPoint().waitForResult(offset);
         return gson.fromJson(res, KafkaReplicatedMessages.CommandResult.class);
     }
 
@@ -125,6 +136,7 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
     @Path(RestAdminMessages.ADMIN)
     @Consumes(MediaType.APPLICATION_JSON)
     public void remotePostMessage(Message msg) {
+        checkSecret();
         long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.REMOTE_POST, null, msg, null, null);
         waitAndParseResult(offset); // sem verificar erro (duplicados são OK)
     }
@@ -133,6 +145,7 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
     @DELETE
     @Path(RestAdminMessages.ADMIN + "/{" + RestAdminMessages.MID + "}")
     public void remoteDeleteMessage(@PathParam(RestAdminMessages.MID) String mid) {
+        checkSecret();
         long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.REMOTE_DELETE, null, null, null, mid);
         waitAndParseResult(offset);
     }
@@ -141,6 +154,7 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
     @DELETE
     @Path(RestAdminMessages.ADMIN + "/" + RestAdminMessages.INBOX + "/{" + RestAdminMessages.NAME + "}")
     public void remoteDeleteUserInbox(@PathParam(RestAdminMessages.NAME) String name) {
+        checkSecret();
         long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.REMOTE_DELETE_INBOX, null, null, name, null);
         waitAndParseResult(offset);
     }
@@ -158,9 +172,7 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
             if (cv != null && !cv.isBlank()) {
                 try {
                     long target = Long.parseLong(cv.trim());
-                    while (KafkaReplicatedMessages.currentVersion < target) {
-                        Thread.sleep(50);
-                    }
+                    SyncPoint.getSyncPoint().waitForVersion(target);
                 } catch (Exception ignored) {}
             }
         }

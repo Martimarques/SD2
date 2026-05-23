@@ -9,6 +9,7 @@ import io.grpc.stub.StreamObserver;
 import sd2526.trab.impl.api.java.AdminMessages;
 import sd2526.trab.impl.grpc.generated_java.AdminMessagesProtoBuf.GrpcAdminMessage;
 import sd2526.trab.impl.grpc.generated_java.AdminMessagesProtoBuf.RemoteDeleteMessageArgs;
+import sd2526.trab.impl.grpc.generated_java.AdminMessagesProtoBuf.RemoteDeleteUserInboxArgs;
 import sd2526.trab.impl.grpc.generated_java.GrpcAdminMessagesGrpc;
 import sd2526.trab.impl.java.servers.JavaMessages;
 
@@ -32,6 +33,13 @@ public class GrpcAdminMessagesController extends GrpcController implements GrpcA
 	public void remoteDeleteMessage(RemoteDeleteMessageArgs request, StreamObserver<Empty> responseObserver) {
 		super.toGrpcResult(responseObserver,
 				((AdminMessages)impl).remoteDeleteMessage(  request.getMid() ),
+				(__) -> Empty.newBuilder().build());
+	}
+
+	@Override
+	public void remoteDeleteUserInbox(RemoteDeleteUserInboxArgs request, StreamObserver<Empty> responseObserver) {
+		super.toGrpcResult(responseObserver,
+				((AdminMessages)impl).remoteDeleteUserInbox( request.getName() ),
 				(__) -> Empty.newBuilder().build());
 	}
 }
