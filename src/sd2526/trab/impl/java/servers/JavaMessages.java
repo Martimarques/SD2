@@ -53,8 +53,6 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 			.expireAfterWrite(Duration.ofMillis(DIRTY_INBOX_CACHE_EXPIRATION))
 			.removalListener( (removed) -> {
 
-				// When triggered, removes any orphaned messages in the database,
-				// i.e. messages that are no longer referenced by any inbox...
 
 				var sqlExpr = """
 						SELECT * FROM Message m
@@ -106,7 +104,7 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 	public Result<List<String>> searchInbox(String name, String pwd, String query) {
 		Log.info( () -> "searchInbox : name = %s, pwd = %s, query=%s\n".formatted(name, pwd, query));
 
-		var safeQuery = query.toUpperCase().replace("'", "''");  // <-- ESTA LINHA
+		var safeQuery = query.toUpperCase().replace("'", "''");
 
 		var sqlExpr = """
             SELECT m.id FROM Message m
@@ -158,22 +156,15 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 	}
 
 	private void deliverToKnownLocalRecipients(Collection<String> addresses, Message msg) {
-		// Se a mensagem foi apagada recentemente (deleteMessage/remoteDeleteMessage),
-		// não re-criar. Isto previne que duplicados de remotePostMessage (causados
-		// pelo replay do Kafka após restart de réplica) recriem mensagens apagadas.
 		if (gcDeletedMessageCache.getIfPresent(msg.getId()) != null) {
 			return;
 		}
 
 		DB.transaction((hibernate) -> {
-			// Verificar se a mensagem já existe (por id) - idempotência
 			Result<Message> existing = hibernate.getOne(msg.getId(), Message.class);
 			if (existing.isOK()) {
-				// Mensagem já processada - NÃO re-criar InboxEntries porque
-				// podem ter sido removidas intencionalmente (removeFromInbox/deleteMessage).
 				return ok();
 			}
-			// Caso contrário, inserir normalmente
 			hibernate.persistOne(msg);
 			for (var address : addresses)
 				hibernate.persistOne(new InboxEntry(msg.getId(), getName(address)));
@@ -244,8 +235,6 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 					.thenWith( (entries) -> hibernate.deleteMany( entries ) );
 		});
 
-		// Marcar mensagem como apagada para prevenir re-criação por
-		// duplicados de remotePostMessage após replay de Kafka
 		gcDeletedMessageCache.put(mid, mid);
 
 		return result;
@@ -288,18 +277,27 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 		}
 	}
 
+	private final ConcurrentHashMap<String, Object> originLocks = new ConcurrentHashMap<>();
+
 	public Result<String> doAsyncPost(User sender, Message msg) {
+		var originId = msg.originId();
+		Object lock = originLocks.computeIfAbsent(originId, k -> new Object());
+		synchronized (lock) {
+			try {
+				return doAsyncPostInternal(sender, msg);
+			} finally {
+				originLocks.remove(originId);
+			}
+		}
+	}
+
+	private Result<String> doAsyncPostInternal(User sender, Message msg) {
 
 		return getCachedMessage(msg.originId()).mapValue(Message::getId).orElse(() -> {
 
 
 			msg.setId("%s+%04d".formatted(THIS_DOMAIN, counter.incrementAndGet()));
 
-			// Deteção de replay: após restart de contentor, o HSQLDB (file mode)
-			// mantém os dados. Se a mensagem já existe no DB, é um replay do Kafka
-			// → restaurar caches e saltar todo o processamento (local + remoto).
-			// Isto previne que duplicados de remotePostMessage recriem mensagens
-			// apagadas em domínios remotos.
 			var existingInDb = DB.getOne(msg.getId(), Message.class);
 			if (existingInDb.isOK()) {
 				messagesCache.put(msg.originId(), existingInDb.value());
@@ -322,10 +320,6 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
 			if (localAdresses.size() > 0)
 				postToLocalInboxes(localAdresses, msg);
 			else {
-				// Sem destinatários locais: persistir a mensagem no DB para que
-				// deleteMessage consiga encontrá-la via getCachedMessage após
-				// expirar do cache (30s). Quando HÁ destinatários locais,
-				// deliverToKnownLocalRecipients já persiste a mensagem atomicamente.
 				DB.transaction((hibernate) -> {
 					Result<Message> existing = hibernate.getOne(msg.getId(), Message.class);
 					if (!existing.isOK()) {

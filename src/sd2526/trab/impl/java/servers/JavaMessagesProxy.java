@@ -31,8 +31,6 @@ public class JavaMessagesProxy implements Messages, AdminMessages {
     @Override
     public Result<Void> remotePostMessage(Message msg) {
         try {
-            // Enviar um email por cada destinatário LOCAL (do nosso domínio)
-            // para que getAllMessages consiga encontrar a mensagem por recipient.
             String myDomain = IP.domain();
             boolean sent = false;
             if (msg.getDestination() != null) {
@@ -43,7 +41,6 @@ public class JavaMessagesProxy implements Messages, AdminMessages {
                     }
                 }
             }
-            // Fallback: se nenhum destinatário local foi encontrado, enviar normalmente
             if (!sent) {
                 Zoho.getInstance().sendEmail(msg);
             }

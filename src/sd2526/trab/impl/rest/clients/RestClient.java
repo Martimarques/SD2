@@ -53,22 +53,18 @@ public class RestClient {
 			try {
 				Result<T> res = func.get();
 
-				// Se o resultado for sucesso, devolve imediatamente
 				if (res.isOK()) {
 					return res;
 				}
 
-				// Se o erro for NOT_FOUND (404), espera um pouco e tenta outra vez (resolve o delay da BD)
 				if (res.error() == ErrorCode.NOT_FOUND || res.error() == ErrorCode.TIMEOUT) {
 					Sleep.ms(RETRY_SLEEP);
-					continue; // Volta ao início do loop
+					continue;
 				}
 
-				// Se for outro erro qualquer (ex: CONFLICT, FORBIDDEN), devolve o erro
 				return res;
 
 			} catch (ProcessingException x) {
-				// Erros de ligação (Timeout, Connection Refused)
 				Sleep.ms(RETRY_SLEEP);
 			} catch (Exception x) {
 				x.printStackTrace();

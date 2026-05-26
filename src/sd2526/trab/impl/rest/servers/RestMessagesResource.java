@@ -29,7 +29,6 @@ public class RestMessagesResource extends RestResource implements RestMessages, 
 
 	synchronized Messages impl() {
 		if( impl == null ) {
-			// Lógica de encaminhamento: Gateway, Proxy (Zoho) ou Base de Dados (Normal)
 			if (isGateway) {
 				impl = Clients.MessagesClient.get();
 			} else if (isProxy) {

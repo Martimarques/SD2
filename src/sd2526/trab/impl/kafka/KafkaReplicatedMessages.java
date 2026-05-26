@@ -13,7 +13,6 @@ import java.util.Map;
 
 public class KafkaReplicatedMessages {
     private static final Gson gson = new Gson();
-    // Dinâmico: Evita colisão se múltiplos domínios usarem o mesmo Kafka
     public static final String TOPIC = "messages_" + IP.domain();
     public static final String KAFKA_BROKERS = "kafka:9092,localhost:9092";
     public static volatile long currentVersion = -1;
@@ -26,15 +25,11 @@ public class KafkaReplicatedMessages {
         synchronized (KafkaReplicatedMessages.class) {
             if (!initialized) {
                 try {
-                    // Garante que o tópico existe antes de subscrever
                     KafkaUtils.createTopic(TOPIC, 1, 1);
 
                     publisher = KafkaPublisher.createPublisher(KAFKA_BROKERS);
                     KafkaSubscriber subscriber = KafkaSubscriber.createSubscriber(KAFKA_BROKERS, List.of(TOPIC));
 
-                    // Determinar o end-offset inicial do tópico para detetar replay.
-                    // Records com offset < initialEndOffset são replay do Kafka
-                    // após restart do contentor.
                     long initialEndOffset = 0;
                     try {
                         var tp = new TopicPartition(TOPIC, 0);
@@ -109,7 +104,6 @@ public class KafkaReplicatedMessages {
         return dbImpl;
     }
 
-    // --- DTOs públicos para o Resource os usar ---
     public static class KafkaCommand {
         public enum OpType {
             POST, REMOVE, DELETE,

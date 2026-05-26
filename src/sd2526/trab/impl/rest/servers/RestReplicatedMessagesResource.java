@@ -31,9 +31,7 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
     @Context
     HttpHeaders headers;
 
-    // -----------------------------------------------------------------------
-    // Utilitário: espera pelo resultado do Kafka e lança exceção se erro
-    // -----------------------------------------------------------------------
+
     private void checkSecret() {
         List<String> secret = headers.getRequestHeader("X-Server-Secret");
         if (secret == null || secret.isEmpty() || !SERVER_SECRET.equals(secret.get(0))) {
@@ -59,9 +57,6 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
         throw new WebApplicationException(s);
     }
 
-    // -----------------------------------------------------------------------
-    // RestMessages — operações de escrita passam pelo Kafka
-    // -----------------------------------------------------------------------
 
     @Override
     @POST
@@ -95,9 +90,6 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
         throwIfError(waitAndParseResult(offset));
     }
 
-    // -----------------------------------------------------------------------
-    // RestMessages — leituras diretas da BD (não passam pelo Kafka)
-    // -----------------------------------------------------------------------
 
     @Override
     @GET
@@ -127,10 +119,6 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
         return null;
     }
 
-    // -----------------------------------------------------------------------
-    // RestAdminMessages — comunicação entre domínios, passa pelo Kafka
-    // -----------------------------------------------------------------------
-
     @Override
     @POST
     @Path(RestAdminMessages.ADMIN)
@@ -138,7 +126,7 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
     public void remotePostMessage(Message msg) {
         checkSecret();
         long offset = kafka.publish(KafkaReplicatedMessages.KafkaCommand.OpType.REMOTE_POST, null, msg, null, null);
-        waitAndParseResult(offset); // sem verificar erro (duplicados são OK)
+        waitAndParseResult(offset);
     }
 
     @Override
@@ -159,9 +147,6 @@ public class RestReplicatedMessagesResource implements RestMessages, RestAdminMe
         waitAndParseResult(offset);
     }
 
-    // -----------------------------------------------------------------------
-    // Filtro de Causalidade (X-MESSAGES header)
-    // -----------------------------------------------------------------------
 
     @Provider
     public static class CausalFilter implements ContainerRequestFilter, ContainerResponseFilter {

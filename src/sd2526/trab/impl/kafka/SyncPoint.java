@@ -42,13 +42,10 @@ public class SyncPoint {
 	}
 
 	public synchronized void setResult(long n, String res) {
-		// If this offset was already processed (e.g. by another replica's Kafka consumer),
-		// just update version if needed and return — do NOT throw.
 		if (n < version) {
 			return;
 		}
 		if (res != null) {
-			// Only store if not already present (first replica wins)
 			result.putIfAbsent(n, res);
 		}
 		version = n;

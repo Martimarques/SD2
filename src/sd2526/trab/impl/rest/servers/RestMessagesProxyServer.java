@@ -16,20 +16,16 @@ public class RestMessagesProxyServer extends AbstractRestServer {
 
     @Override
     void registerResources(ResourceConfig config) {
-        // Avisar o recurso que estamos a correr como Proxy do Zoho
         RestMessagesResource.isProxy = true;
         config.register(RestMessagesResource.class);
     }
 
     public static void main(String[] args) throws Exception {
-        // TRUQUE DO ESTADO LIMPO (Requisito do Enunciado)
-        // O Tester passa "true" ou "false" no args[0] para indicar se devemos ignorar o lixo.
         if (args.length > 0) {
             boolean drop = Boolean.parseBoolean(args[0]);
             Zoho.getInstance().setDropState(drop);
             System.out.println("ProxyServer: Argumento dropState recebido = " + drop);
         } else {
-            // Por omissão, se não passarem argumentos, assumimos "true" para limpar o lixo.
             Zoho.getInstance().setDropState(true);
             System.out.println("ProxyServer: Nenhum argumento recebido, dropState por omissao = true");
         }

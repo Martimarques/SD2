@@ -15,11 +15,9 @@ public class RestGatewayServer extends AbstractRestServer {
 
 	@Override
 	void registerResources(ResourceConfig config) {
-		// 1. Avisar os recursos que estamos a correr em modo Gateway
 		RestUsersResource.isGateway = true;
 		RestMessagesResource.isGateway = true;
 
-		// 2. Registar as classes em vez das instâncias para o Jersey detetar os @Path corretamente
 		config.register(RestUsersResource.class);
 		config.register(RestMessagesResource.class);
 	}

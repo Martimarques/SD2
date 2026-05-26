@@ -25,7 +25,6 @@ public class GrpcMessagesServer extends AbstractGrpcServer {
 	@Override
 	protected List<ServerServiceDefinition> controllers(String uri) {
 
-		// Interceptor inline (classe anónima) para não criar ficheiro novo
 		ServerInterceptor secretAuth = new ServerInterceptor() {
 			private static final String SERVER_SECRET = "SD2526-Password-Secreta";
 			private static final Metadata.Key<String> SECRET_KEY = Metadata.Key.of("x-server-secret", Metadata.ASCII_STRING_MARSHALLER);

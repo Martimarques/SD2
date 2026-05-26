@@ -22,11 +22,10 @@ public class Zoho {
     private String accountId = null;
     private String myEmailAddress = null;
 
-    // CORREÇÃO 1: Usar estruturas Thread-Safe para não precisarmos de trancar tudo!
     private final java.util.Set<String> ignoredZohoIds = ConcurrentHashMap.newKeySet();
     private final java.util.Set<String> deletedMids = ConcurrentHashMap.newKeySet();
     private volatile boolean isCleanStateInitialized = false;
-    private volatile boolean firstReadDone = false; // Controla o tempo de espera do recomeço
+    private volatile boolean firstReadDone = false;
 
     private boolean dropState = true;
 
@@ -82,7 +81,6 @@ public class Zoho {
 
         if (!dropState) {
             System.out.println("Zoho: Restart com DROP_STATE=false. A manter as mensagens anteriores!");
-            // Removemos o sleep daqui para não trancar a porta!
             return;
         }
 
@@ -106,13 +104,11 @@ public class Zoho {
         }
     }
 
-    // CORREÇÃO 2: Removido o synchronized daqui!
     public void deleteMessage(String mid) {
         deletedMids.add(mid);
         System.out.println("Zoho: Mensagem " + mid + " apagada virtualmente.");
     }
 
-    // CORREÇÃO 3: Removido o synchronized daqui para permitir a entrada de retransmissões em tempo real!
     public String sendEmail(Message msg) throws Exception {
         return sendEmail(msg, null);
     }
@@ -154,19 +150,16 @@ public class Zoho {
         }
     }
 
-    // CORREÇÃO 4: Removido o synchronized!
     public List<String> getAllMessages(String expectedRecipient) throws Exception {
         if (!isCleanStateInitialized) initCleanState();
         if (this.accountId == null || this.myEmailAddress == null) fetchAccountInfo();
         if (this.accountId == null) return List.of();
 
-        // Se acabámos de recomeçar (dropState=false), o Tester pode estar à espera
-        // de retransmissões do outro servidor (que demoram algum tempo a chegar).
-        // Aumentamos o número de tentativas (polling) temporariamente de 3 para 8.
+
         int maxTentativas = 3;
         if (!dropState && !firstReadDone) {
             System.out.println("Zoho: Primeira leitura apos crash. A ativar Polling Ativo longo...");
-            maxTentativas = 8; // 8 tentativas * 2 segundos = 16s de paciência máxima
+            maxTentativas = 8;
             firstReadDone = true;
         }
 
@@ -190,9 +183,6 @@ public class Zoho {
                                 .distinct()
                                 .toList();
 
-                        // Se for uma leitura normal (maxTentativas=3), devolve logo o que encontrar.
-                        // Se estivermos em recuperação de falha (maxTentativas=8),
-                        // devolve logo que tiver encontrado pelo menos 1 mensagem.
                         if (maxTentativas == 3 || lastKnownList.size() >= 1) {
                             return lastKnownList;
                         }
@@ -200,18 +190,16 @@ public class Zoho {
                 }
             }
 
-            // Se estamos em modo de recuperação de falha e só apanhámos 1 mensagem,
-            // ou se ainda não apanhámos nada, esperamos 2s e tentamos outra vez (para dar tempo à retransmissão!)
+
             if (maxTentativas > 3) {
                 System.out.println("Zoho: Polling aguarda retransmissoes... (Tentativa " + (i+1) + " de " + maxTentativas + ")");
             }
             Thread.sleep(2000);
         }
 
-        return lastKnownList; // Devolve o que tiver conseguido ao fim das tentativas todas
+        return lastKnownList;
     }
 
-    // CORREÇÃO 6: Removido o synchronized!
     public Message getMessage(String mid) throws Exception {
         if (deletedMids.contains(mid)) return null;
 
